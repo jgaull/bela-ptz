@@ -19,14 +19,14 @@ const MOUSE_SCAN_DIRS = ["/dev/input/by-id", "/dev/input/by-path"];
 //   value   (4 bytes, s32)
 const INPUT_EVENT_SIZE = 24;
 const EV_KEY = 1;
-const BTN_LEFT = 272;
 const BTN_RIGHT = 273;
+const BTN_MIDDLE = 274;
 const KEY_DOWN = 1;
 
 // --- STATE ---
 let cameraDevice = null;
 let mouseStream = null;
-let lastClickTime = { left: 0, right: 0 };
+let lastClickTime = { middle: 0, right: 0 };
 let dirWatchers = [];
 const activeChildren = new Set();
 let gimbalBusy = false;
@@ -131,11 +131,11 @@ function closestPreset(pan) {
 
 // --- CLICK HANDLERS ---
 
-async function onLeftClick() {
+async function onMiddleClick() {
   const now = Date.now();
-  if (now - lastClickTime.left < CLICK_DEBOUNCE_MS) return;
+  if (now - lastClickTime.middle < CLICK_DEBOUNCE_MS) return;
   if (gimbalBusy) return;
-  lastClickTime.left = now;
+  lastClickTime.middle = now;
   gimbalBusy = true;
   try {
     const pan = await readPan();
@@ -177,7 +177,7 @@ function parseEvents(buf) {
     const value = buf.readInt32LE(offset + 20);
 
     if (type === EV_KEY && value === KEY_DOWN) {
-      if (code === BTN_LEFT) onLeftClick();
+      if (code === BTN_MIDDLE) onMiddleClick();
       else if (code === BTN_RIGHT) onRightClick();
     }
   }
@@ -309,7 +309,7 @@ process.on("SIGINT",  () => cleanup("SIGINT"));
 cameraDevice = detectCamera();
 
 console.log("--- Camera Controls ---");
-console.log("Left click  : toggle FORWARD / BACKWARD");
+console.log("Middle click: toggle FORWARD / BACKWARD");
 console.log("Right click : re-center current mode");
 
 connectMouse();
