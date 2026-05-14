@@ -295,14 +295,8 @@ process.on("unhandledRejection", (reason) => {
 
 function cleanup(signal) {
   console.log(`[cleanup] received ${signal}`);
-  // Fallback: if process.exit() hangs on a libuv handle, force-kill ourselves.
-  setTimeout(() => process.kill(process.pid, "SIGKILL"), 1000).unref();
   for (const child of activeChildren) {
     try { child.kill("SIGKILL"); } catch (_) {}
-  }
-  disconnectMouse();
-  for (const w of dirWatchers) {
-    try { w.close(); } catch (_) {}
   }
   process.exit(0);
 }
