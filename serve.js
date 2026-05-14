@@ -9,6 +9,7 @@ const PAN_FORWARD = 648000;
 const PAN_BACKWARD = 0;
 const TILT_CENTER = 0;
 const V4L2_TIMEOUT_MS = 3000;
+const GIMBAL_COOLDOWN_MS = 5000;
 const CLICK_DEBOUNCE_MS = 150;
 const MOUSE_SCAN_DIRS = ['/dev/input/by-id', '/dev/input/by-path'];
 
@@ -115,9 +116,12 @@ function moveGimbal(pan) {
 
   child.on('close', (code, signal) => {
     clearTimeout(timer);
-    if (activeGimbalChild === child) activeGimbalChild = null;
-    console.log(`[GIMBAL] pid=${child.pid} closed code=${code} signal=${signal} busy=${!!activeGimbalChild}`);
+    console.log(`[GIMBAL] pid=${child.pid} closed code=${code} signal=${signal} — cooling down ${GIMBAL_COOLDOWN_MS}ms`);
     if (code !== 0 && signal == null) console.error(`Gimbal move failed (exit ${code}).`);
+    setTimeout(() => {
+      if (activeGimbalChild === child) activeGimbalChild = null;
+      console.log(`[GIMBAL] cooldown done, ready`);
+    }, GIMBAL_COOLDOWN_MS);
   });
 
   child.on('error', (err) => {
@@ -131,9 +135,13 @@ function moveGimbal(pan) {
 
 function logCurrentPan(prefix) {
   const child = spawn('v4l2-ctl', ['-d', cameraDevice, '-C', 'pan_absolute,tilt_absolute'], { stdio: 'pipe' });
-  let out = '';
+  let out = '', err = '';
   child.stdout.on('data', d => out += d);
-  child.on('close', () => console.log(`${prefix} hw=${out.trim()}`));
+  child.stderr.on('data', d => err += d);
+  child.on('close', (code) => {
+    if (code === 0) console.log(`${prefix} hw=${out.trim()}`);
+    else console.log(`${prefix} hw=read_failed(${err.trim() || 'exit ' + code})`);
+  });
 }
 
 function onLeftClick() {
