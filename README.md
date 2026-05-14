@@ -4,10 +4,10 @@ DJI Osmo Pocket 3 PTZ control via USB mouse. Runs as a systemd service on the be
 
 ## Controls
 
-| Click       | Action                                |
-|-------------|---------------------------------------|
-| Left click  | Toggle camera between FORWARD / BACKWARD (180°) |
-| Right click | Re-center current mode (pan target + tilt 0) |
+| Click        | Action                                |
+|--------------|---------------------------------------|
+| Middle click | Toggle camera between FORWARD / BACKWARD (180°) |
+| Right click  | Re-center current mode (pan target + tilt 0) |
 
 Override mouse device: `MOUSE_DEV=/dev/input/eventX node serve.js`
 
@@ -22,4 +22,11 @@ sudo node install.js
 
 ```bash
 journalctl -u bela-ptz -f
+```
+
+## Stop / disable
+
+```bash
+sudo systemctl stop bela-ptz      # stop the running service
+sudo systemctl disable bela-ptz   # don't start on boot
 ```
