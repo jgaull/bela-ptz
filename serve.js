@@ -7,6 +7,7 @@ const path = require("path");
 // --- CONFIGURATION ---
 const PAN_FORWARD = 648000;
 const PAN_BACKWARD = 0;
+const TILT_CENTER = 0;
 const V4L2_TIMEOUT_MS = 3000;
 const CLICK_DEBOUNCE_MS = 150;
 const MOUSE_SCAN_DIRS = ["/dev/input/by-id", "/dev/input/by-path"];
@@ -157,7 +158,7 @@ async function onRightClick() {
   try {
     const pan = await readPan();
     const target = closestPreset(pan);
-    await spawnV4l2([`--set-ctrl=pan_absolute=${target}`]);
+    await spawnV4l2([`--set-ctrl=pan_absolute=${target},tilt_absolute=${TILT_CENTER}`]);
   } catch (err) {
     console.error(`Right click failed: ${err.message}`);
   }
