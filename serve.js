@@ -293,21 +293,21 @@ process.on("unhandledRejection", (reason) => {
   process.exit(1);
 });
 
-function cleanup() {
+function cleanup(signal) {
+  console.log(`[cleanup] received ${signal}, activeChildren=${activeChildren.size}`);
   for (const child of activeChildren) {
-    try { child.kill("SIGKILL"); } catch (_) {}
+    try { child.kill("SIGKILL"); console.log(`[cleanup] killed child pid=${child.pid}`); } catch (_) {}
   }
   disconnectMouse();
   for (const w of dirWatchers) {
-    try {
-      w.close();
-    } catch (_) {}
+    try { w.close(); } catch (_) {}
   }
+  console.log('[cleanup] calling process.exit(0)');
   process.exit(0);
 }
 
-process.on("SIGTERM", cleanup);
-process.on("SIGINT", cleanup);
+process.on("SIGTERM", () => cleanup("SIGTERM"));
+process.on("SIGINT",  () => cleanup("SIGINT"));
 
 // --- MAIN ---
 
