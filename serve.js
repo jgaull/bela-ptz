@@ -92,43 +92,39 @@ function targetPan() {
   return isForward ? PAN_FORWARD : PAN_BACKWARD;
 }
 
-function moveGimbal(pan) {
+function spawnV4l2(args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('v4l2-ctl', ['-d', cameraDevice, ...args], { stdio: 'pipe' });
+    const timer = setTimeout(() => { child.kill(); reject(new Error('timed out')); }, V4L2_TIMEOUT_MS);
+    child.on('close', (code) => { clearTimeout(timer); code === 0 ? resolve() : reject(new Error(`exit ${code}`)); });
+    child.on('error', (err) => { clearTimeout(timer); reject(err); });
+  });
+}
+
+async function moveGimbal(pan) {
   if (activeGimbalChild) {
     console.log('Gimbal busy, ignoring click.');
     return;
   }
 
-  const child = spawn('v4l2-ctl', [
-    '-d', cameraDevice,
-    `--set-ctrl=pan_absolute=${pan},tilt_absolute=${TILT_CENTER}`,
-  ], { stdio: 'pipe' });
+  // Use a sentinel so concurrent clicks are blocked during the whole sequence.
+  activeGimbalChild = {};
 
-  activeGimbalChild = child;
-  console.log(`[GIMBAL] spawned pid=${child.pid} pan=${pan}`);
+  console.log(`[GIMBAL] tilt → 0 then pan → ${pan}`);
+  try {
+    await spawnV4l2([`--set-ctrl=tilt_absolute=${TILT_CENTER}`]);
+    console.log(`[GIMBAL] tilt done`);
+    await spawnV4l2([`--set-ctrl=pan_absolute=${pan}`]);
+    console.log(`[GIMBAL] pan done`);
+  } catch (err) {
+    console.error(`[GIMBAL] failed: ${err.message}`);
+  }
 
-  const timer = setTimeout(() => {
-    if (activeGimbalChild === child) {
-      child.kill();
-      activeGimbalChild = null;
-      console.error('Gimbal move timed out.');
-    }
-  }, V4L2_TIMEOUT_MS);
-
-  child.on('close', (code, signal) => {
-    clearTimeout(timer);
-    console.log(`[GIMBAL] pid=${child.pid} closed code=${code} signal=${signal} — cooling down ${GIMBAL_COOLDOWN_MS}ms`);
-    if (code !== 0 && signal == null) console.error(`Gimbal move failed (exit ${code}).`);
-    setTimeout(() => {
-      if (activeGimbalChild === child) activeGimbalChild = null;
-      console.log(`[GIMBAL] cooldown done, ready`);
-    }, GIMBAL_COOLDOWN_MS);
-  });
-
-  child.on('error', (err) => {
-    clearTimeout(timer);
-    if (activeGimbalChild === child) activeGimbalChild = null;
-    console.error('Gimbal move error:', err.message);
-  });
+  console.log(`[GIMBAL] cooling down ${GIMBAL_COOLDOWN_MS}ms`);
+  setTimeout(() => {
+    activeGimbalChild = null;
+    console.log('[GIMBAL] cooldown done, ready');
+  }, GIMBAL_COOLDOWN_MS);
 }
 
 // --- CLICK HANDLERS ---
