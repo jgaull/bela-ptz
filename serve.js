@@ -116,21 +116,13 @@ function spawnV4l2(args) {
 }
 
 async function moveGimbal(pan) {
-  if (gimbalBusy) {
-    console.log("Gimbal busy, ignoring click.");
-    return;
-  }
-
+  if (gimbalBusy) return;
   gimbalBusy = true;
-  console.log(`Gimbal: pan → ${pan}`);
-
   try {
     await spawnV4l2([`--set-ctrl=pan_absolute=${pan}`]);
-    console.log("Gimbal: done");
   } catch (err) {
-    console.error(`Gimbal: failed: ${err.message}`);
+    console.error(`Gimbal move failed: ${err.message}`);
   }
-
   gimbalBusy = false;
 }
 
@@ -139,25 +131,17 @@ async function moveGimbal(pan) {
 function onLeftClick() {
   const now = Date.now();
   if (now - lastClickTime.left < CLICK_DEBOUNCE_MS) return;
-  if (gimbalBusy) {
-    console.log("Gimbal busy, ignoring left click.");
-    return;
-  }
+  if (gimbalBusy) return;
   lastClickTime.left = now;
   isForward = !isForward;
-  console.log(`Left click: ${isForward ? "FORWARD" : "BACKWARD"}`);
   moveGimbal(targetPan());
 }
 
 function onRightClick() {
   const now = Date.now();
   if (now - lastClickTime.right < CLICK_DEBOUNCE_MS) return;
-  if (gimbalBusy) {
-    console.log("Gimbal busy, ignoring right click.");
-    return;
-  }
+  if (gimbalBusy) return;
   lastClickTime.right = now;
-  console.log(`Right click: center ${isForward ? "FORWARD" : "BACKWARD"}`);
   moveGimbal(targetPan());
 }
 
