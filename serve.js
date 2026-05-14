@@ -5,8 +5,8 @@ const fs = require('fs');
 const path = require('path');
 
 // --- CONFIGURATION ---
-const PAN_FORWARD = 0;
-const PAN_BACKWARD = 648000;
+const PAN_FORWARD = 648000;
+const PAN_BACKWARD = 0;
 const TILT_CENTER = 0;
 const V4L2_TIMEOUT_MS = 3000;
 const CLICK_DEBOUNCE_MS = 150;
@@ -132,17 +132,20 @@ function moveGimbal(pan) {
 function onLeftClick() {
   const now = Date.now();
   if (now - lastClickTime.left < CLICK_DEBOUNCE_MS) return;
+  if (activeGimbalChild) return;
   lastClickTime.left = now;
   isForward = !isForward;
-  console.log(`Toggle → ${isForward ? 'FORWARD' : 'BACKWARD'}`);
+  console.log(`[LEFT]  flipped → isForward=${isForward} pan=${targetPan()}`);
   moveGimbal(targetPan());
 }
 
 function onRightClick() {
   const now = Date.now();
+  console.log(`[RIGHT] isForward=${isForward} busy=${!!activeGimbalChild} debounce=${now - lastClickTime.right < CLICK_DEBOUNCE_MS}`);
   if (now - lastClickTime.right < CLICK_DEBOUNCE_MS) return;
+  if (activeGimbalChild) return;
   lastClickTime.right = now;
-  console.log(`Center → ${isForward ? 'FORWARD' : 'BACKWARD'}`);
+  console.log(`[RIGHT] centering → isForward=${isForward} pan=${targetPan()}`);
   moveGimbal(targetPan());
 }
 
