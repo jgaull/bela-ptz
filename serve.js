@@ -92,6 +92,7 @@ function targetPan() {
 
 function spawnV4l2(args) {
   return new Promise((resolve, reject) => {
+    console.log(`v4l2-ctl -d ${cameraDevice} ${args.join(' ')}`);
     const child = spawn('v4l2-ctl', ['-d', cameraDevice, ...args], { stdio: 'ignore' });
     const timer = setTimeout(() => { child.kill(); reject(new Error('timed out')); }, V4L2_TIMEOUT_MS);
     child.on('close', (code) => { clearTimeout(timer); code === 0 ? resolve() : reject(new Error(`exit ${code}`)); });
