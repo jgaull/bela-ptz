@@ -24,7 +24,6 @@ const BTN_RIGHT = 273;
 const KEY_DOWN = 1;
 
 // --- STATE ---
-let isForward = true;
 let cameraDevice = null;
 let mouseStream = null;
 let lastClickTime = { left: 0, right: 0 };
@@ -91,22 +90,20 @@ function detectCamera() {
 
 // --- GIMBAL CONTROL ---
 
-function targetPan() {
-  return isForward ? PAN_FORWARD : PAN_BACKWARD;
-}
-
-function spawnV4l2(args) {
+function spawnV4l2(args, captureStdout = false) {
   return new Promise((resolve, reject) => {
     const child = spawn("v4l2-ctl", ["-d", cameraDevice, ...args], {
-      stdio: "ignore",
+      stdio: ["ignore", captureStdout ? "pipe" : "ignore", "ignore"],
     });
+    let out = "";
+    if (captureStdout) child.stdout.on("data", (d) => (out += d));
     const timer = setTimeout(() => {
       child.kill();
       reject(new Error("timed out"));
     }, V4L2_TIMEOUT_MS);
     child.on("close", (code) => {
       clearTimeout(timer);
-      code === 0 ? resolve() : reject(new Error(`exit ${code}`));
+      code === 0 ? resolve(out) : reject(new Error(`exit ${code}`));
     });
     child.on("error", (err) => {
       clearTimeout(timer);
@@ -115,34 +112,52 @@ function spawnV4l2(args) {
   });
 }
 
-async function moveGimbal(pan) {
-  if (gimbalBusy) return;
-  gimbalBusy = true;
-  try {
-    await spawnV4l2([`--set-ctrl=pan_absolute=${pan}`]);
-  } catch (err) {
-    console.error(`Gimbal move failed: ${err.message}`);
-  }
-  gimbalBusy = false;
+async function readPan() {
+  const out = await spawnV4l2(["-C", "pan_absolute"], true);
+  const match = out.match(/pan_absolute:\s*(-?\d+)/);
+  if (!match) throw new Error("could not parse pan_absolute");
+  return parseInt(match[1], 10);
+}
+
+function closestPreset(pan) {
+  const distForward = Math.abs(pan - PAN_FORWARD);
+  const distBackward = Math.abs(pan - PAN_BACKWARD);
+  return distForward <= distBackward ? PAN_FORWARD : PAN_BACKWARD;
 }
 
 // --- CLICK HANDLERS ---
 
-function onLeftClick() {
+async function onLeftClick() {
   const now = Date.now();
   if (now - lastClickTime.left < CLICK_DEBOUNCE_MS) return;
   if (gimbalBusy) return;
   lastClickTime.left = now;
-  isForward = !isForward;
-  moveGimbal(targetPan());
+  gimbalBusy = true;
+  try {
+    const pan = await readPan();
+    const current = closestPreset(pan);
+    const target = current === PAN_FORWARD ? PAN_BACKWARD : PAN_FORWARD;
+    await spawnV4l2([`--set-ctrl=pan_absolute=${target}`]);
+  } catch (err) {
+    console.error(`Left click failed: ${err.message}`);
+  }
+  gimbalBusy = false;
 }
 
-function onRightClick() {
+async function onRightClick() {
   const now = Date.now();
   if (now - lastClickTime.right < CLICK_DEBOUNCE_MS) return;
   if (gimbalBusy) return;
   lastClickTime.right = now;
-  moveGimbal(targetPan());
+  gimbalBusy = true;
+  try {
+    const pan = await readPan();
+    const target = closestPreset(pan);
+    await spawnV4l2([`--set-ctrl=pan_absolute=${target}`]);
+  } catch (err) {
+    console.error(`Right click failed: ${err.message}`);
+  }
+  gimbalBusy = false;
 }
 
 // --- RAW EVDEV READER ---
