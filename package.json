@@ -1,5 +1,5 @@
 {
-  "name": "camera-controls",
+  "name": "bela-ptz",
   "version": "1.0.0",
   "private": false,
   "description": "DJI Pocket 3 PTZ control via USB mouse clicks",

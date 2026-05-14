@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 
-// install.js — One-time setup for camera-controls.
+// install.js — One-time setup for bela-ptz.
 // Must be run with: sudo node install.js
 //
-// Writes /etc/systemd/system/camera-controls.service and enables it.
+// Writes /etc/systemd/system/bela-ptz.service and enables it.
 
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const SERVICE_NAME = 'camera-controls';
+const SERVICE_NAME = 'bela-ptz';
 const SERVICE_FILE = `/etc/systemd/system/${SERVICE_NAME}.service`;
 const SERVE_JS = path.join(__dirname, 'serve.js');
 
