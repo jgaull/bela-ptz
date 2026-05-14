@@ -190,20 +190,28 @@ function connectMouse() {
       mouseMouse = null;
     });
   } catch (err) {
-    console.error("Failed to open mouse device:", err.message);
     mouseInput = null;
     mouseMouse = null;
+    if (err.code === 'EACCES') {
+      console.error(`Permission denied opening mouse device. Add yourself to the 'input' group and re-login:\n  sudo usermod -a -G input $USER`);
+    } else {
+      console.error("Failed to open mouse device:", err.message);
+    }
   }
 }
 
 function watchForMouse() {
+  let reconnectTimer = null;
+
   for (const dir of MOUSE_SCAN_DIRS) {
     if (!fs.existsSync(dir)) continue;
     try {
       const watcher = fs.watch(dir, (eventType) => {
         if (eventType === "rename" && !mouseInput) {
-          // Small delay to let the kernel finish creating the symlink
-          setTimeout(connectMouse, 500);
+          // Debounce: plugging in a device fires several rename events in quick
+          // succession. Wait until they settle before attempting to connect.
+          clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(connectMouse, 500);
         }
       });
       watcher.on("error", () => {});
