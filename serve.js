@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const { execSync } = require('child_process');
+const { execSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -30,6 +30,7 @@ let cameraDevice = null;
 let mouseStream = null;
 let lastClickTime = { left: 0, right: 0 };
 let dirWatchers = [];
+let activeGimbalChild = null;
 
 // --- CAMERA DETECTION ---
 
@@ -91,15 +92,39 @@ function targetPan() {
 }
 
 function moveGimbal(pan) {
-  try {
-    execSync(
-      `v4l2-ctl -d ${cameraDevice} --set-ctrl=pan_absolute=${pan},tilt_absolute=${TILT_CENTER}`,
-      { timeout: V4L2_TIMEOUT_MS, stdio: 'pipe' }
-    );
-    console.log(`Gimbal: ${isForward ? 'FORWARD' : 'BACKWARD'} (pan=${pan})`);
-  } catch (err) {
-    console.error('Gimbal move failed:', err.message);
+  if (activeGimbalChild) {
+    activeGimbalChild.kill();
+    activeGimbalChild = null;
   }
+
+  const label = isForward ? 'FORWARD' : 'BACKWARD';
+  const child = spawn('v4l2-ctl', [
+    '-d', cameraDevice,
+    `--set-ctrl=pan_absolute=${pan},tilt_absolute=${TILT_CENTER}`,
+  ], { stdio: 'pipe' });
+
+  activeGimbalChild = child;
+
+  const timer = setTimeout(() => {
+    if (activeGimbalChild === child) {
+      child.kill();
+      activeGimbalChild = null;
+      console.error('Gimbal move timed out.');
+    }
+  }, V4L2_TIMEOUT_MS);
+
+  child.on('close', (code) => {
+    clearTimeout(timer);
+    if (activeGimbalChild === child) activeGimbalChild = null;
+    if (code === 0) console.log(`Gimbal: ${label} (pan=${pan})`);
+    else console.error(`Gimbal move failed (exit ${code}).`);
+  });
+
+  child.on('error', (err) => {
+    clearTimeout(timer);
+    if (activeGimbalChild === child) activeGimbalChild = null;
+    console.error('Gimbal move error:', err.message);
+  });
 }
 
 // --- CLICK HANDLERS ---
