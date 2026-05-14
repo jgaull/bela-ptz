@@ -129,24 +129,33 @@ function moveGimbal(pan) {
 
 // --- CLICK HANDLERS ---
 
+function logCurrentPan(prefix) {
+  const child = spawn('v4l2-ctl', ['-d', cameraDevice, '-C', 'pan_absolute,tilt_absolute'], { stdio: 'pipe' });
+  let out = '';
+  child.stdout.on('data', d => out += d);
+  child.on('close', () => console.log(`${prefix} hw=${out.trim()}`));
+}
+
 function onLeftClick() {
   const now = Date.now();
   console.log(`[LEFT]  isForward=${isForward} busy=${!!activeGimbalChild} debounce=${now - lastClickTime.left < CLICK_DEBOUNCE_MS}`);
+  logCurrentPan('[LEFT] ');
   if (now - lastClickTime.left < CLICK_DEBOUNCE_MS) return;
   if (activeGimbalChild) return;
   lastClickTime.left = now;
   isForward = !isForward;
-  console.log(`[LEFT]  flipped → isForward=${isForward} pan=${targetPan()}`);
+  console.log(`[LEFT]  flipped → isForward=${isForward} target_pan=${targetPan()}`);
   moveGimbal(targetPan());
 }
 
 function onRightClick() {
   const now = Date.now();
   console.log(`[RIGHT] isForward=${isForward} busy=${!!activeGimbalChild} debounce=${now - lastClickTime.right < CLICK_DEBOUNCE_MS}`);
+  logCurrentPan('[RIGHT]');
   if (now - lastClickTime.right < CLICK_DEBOUNCE_MS) return;
   if (activeGimbalChild) return;
   lastClickTime.right = now;
-  console.log(`[RIGHT] centering → isForward=${isForward} pan=${targetPan()}`);
+  console.log(`[RIGHT] centering → isForward=${isForward} target_pan=${targetPan()}`);
   moveGimbal(targetPan());
 }
 
