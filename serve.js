@@ -8,7 +8,6 @@ const path = require('path');
 const PAN_FORWARD = 648000;
 const PAN_BACKWARD = 0;
 const V4L2_TIMEOUT_MS = 3000;
-const GIMBAL_COOLDOWN_MS = 5000;
 const CLICK_DEBOUNCE_MS = 150;
 const MOUSE_SCAN_DIRS = ['/dev/input/by-id', '/dev/input/by-path'];
 
@@ -93,7 +92,7 @@ function targetPan() {
 
 function spawnV4l2(args) {
   return new Promise((resolve, reject) => {
-    const child = spawn('v4l2-ctl', ['-d', cameraDevice, ...args], { stdio: 'pipe' });
+    const child = spawn('v4l2-ctl', ['-d', cameraDevice, ...args], { stdio: 'ignore' });
     const timer = setTimeout(() => { child.kill(); reject(new Error('timed out')); }, V4L2_TIMEOUT_MS);
     child.on('close', (code) => { clearTimeout(timer); code === 0 ? resolve() : reject(new Error(`exit ${code}`)); });
     child.on('error', (err) => { clearTimeout(timer); reject(err); });
@@ -116,10 +115,7 @@ async function moveGimbal(pan) {
     console.error(`Gimbal: failed: ${err.message}`);
   }
 
-  setTimeout(() => {
-    gimbalBusy = false;
-    console.log('Gimbal: ready');
-  }, GIMBAL_COOLDOWN_MS);
+  gimbalBusy = false;
 }
 
 // --- CLICK HANDLERS ---
