@@ -8,7 +8,5 @@
     "start": "node serve.js",
     "install-service": "sudo node install.js"
   },
-  "dependencies": {
-    "input-event": "^1.0.5"
-  }
+  "dependencies": {}
 }

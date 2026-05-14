@@ -1,23 +1,33 @@
 #!/usr/bin/env node
 
-const { execSync } = require("child_process");
-const fs = require("fs");
-const path = require("path");
-const InputEvent = require("input-event");
+const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
 
 // --- CONFIGURATION ---
 const PAN_FORWARD = 0;
 const PAN_BACKWARD = 648000;
 const TILT_CENTER = 0;
 const V4L2_TIMEOUT_MS = 3000;
-const CLICK_DEBOUNCE_MS = 1000;
-const MOUSE_SCAN_DIRS = ["/dev/input/by-id", "/dev/input/by-path"];
+const CLICK_DEBOUNCE_MS = 150;
+const MOUSE_SCAN_DIRS = ['/dev/input/by-id', '/dev/input/by-path'];
+
+// Linux input_event struct (24 bytes on 64-bit):
+//   tv_sec  (8 bytes, u64)
+//   tv_usec (8 bytes, u64)
+//   type    (2 bytes, u16)
+//   code    (2 bytes, u16)
+//   value   (4 bytes, s32)
+const INPUT_EVENT_SIZE = 24;
+const EV_KEY = 1;
+const BTN_LEFT = 272;
+const BTN_RIGHT = 273;
+const KEY_DOWN = 1;
 
 // --- STATE ---
 let isForward = true;
 let cameraDevice = null;
-let mouseInput = null;
-let mouseMouse = null;
+let mouseStream = null;
 let lastClickTime = { left: 0, right: 0 };
 let dirWatchers = [];
 
@@ -26,24 +36,22 @@ let dirWatchers = [];
 function detectCamera() {
   let listOutput;
   try {
-    listOutput = execSync("v4l2-ctl --list-devices", {
+    listOutput = execSync('v4l2-ctl --list-devices', {
       timeout: V4L2_TIMEOUT_MS,
-      stdio: "pipe",
+      stdio: 'pipe',
     }).toString();
   } catch (err) {
-    console.error("Failed to list v4l2 devices:", err.message);
+    console.error('Failed to list v4l2 devices:', err.message);
     process.exit(1);
   }
 
-  // Split into blocks separated by blank lines
   const blocks = listOutput.split(/\n\s*\n/).filter(Boolean);
   let devicePath = null;
 
   for (const block of blocks) {
-    const lines = block.trim().split("\n");
-    const header = lines[0];
-    if (/OsmoPocket3|DJIPocket3/i.test(header)) {
-      const videoLine = lines.find((l) => /\/dev\/video/.test(l));
+    const lines = block.trim().split('\n');
+    if (/OsmoPocket3|DJIPocket3/i.test(lines[0])) {
+      const videoLine = lines.find(l => /\/dev\/video/.test(l));
       if (videoLine) {
         devicePath = videoLine.trim();
         break;
@@ -52,29 +60,23 @@ function detectCamera() {
   }
 
   if (!devicePath) {
-    console.error("DJI Pocket 3 not found. Is it connected via USB?");
+    console.error('DJI Pocket 3 not found. Is it connected via USB?');
     process.exit(1);
   }
 
-  // Validate it supports pan/tilt
   let ctrlOutput;
   try {
     ctrlOutput = execSync(`v4l2-ctl -d ${devicePath} --list-ctrls`, {
       timeout: V4L2_TIMEOUT_MS,
-      stdio: "pipe",
+      stdio: 'pipe',
     }).toString();
   } catch (err) {
     console.error(`Failed to read controls for ${devicePath}:`, err.message);
     process.exit(1);
   }
 
-  if (
-    !ctrlOutput.includes("pan_absolute") ||
-    !ctrlOutput.includes("tilt_absolute")
-  ) {
-    console.error(
-      `${devicePath} does not expose pan_absolute / tilt_absolute controls.`,
-    );
+  if (!ctrlOutput.includes('pan_absolute') || !ctrlOutput.includes('tilt_absolute')) {
+    console.error(`${devicePath} does not expose pan_absolute / tilt_absolute controls.`);
     process.exit(1);
   }
 
@@ -92,11 +94,11 @@ function moveGimbal(pan) {
   try {
     execSync(
       `v4l2-ctl -d ${cameraDevice} --set-ctrl=pan_absolute=${pan},tilt_absolute=${TILT_CENTER}`,
-      { timeout: V4L2_TIMEOUT_MS, stdio: "pipe" },
+      { timeout: V4L2_TIMEOUT_MS, stdio: 'pipe' }
     );
-    console.log(`Gimbal: ${isForward ? "FORWARD" : "BACKWARD"} (pan=${pan})`);
+    console.log(`Gimbal: ${isForward ? 'FORWARD' : 'BACKWARD'} (pan=${pan})`);
   } catch (err) {
-    console.error("Gimbal move failed:", err.message);
+    console.error('Gimbal move failed:', err.message);
   }
 }
 
@@ -106,9 +108,8 @@ function onLeftClick() {
   const now = Date.now();
   if (now - lastClickTime.left < CLICK_DEBOUNCE_MS) return;
   lastClickTime.left = now;
-
   isForward = !isForward;
-  console.log(`Toggle → ${isForward ? "FORWARD" : "BACKWARD"}`);
+  console.log(`Toggle → ${isForward ? 'FORWARD' : 'BACKWARD'}`);
   moveGimbal(targetPan());
 }
 
@@ -116,87 +117,97 @@ function onRightClick() {
   const now = Date.now();
   if (now - lastClickTime.right < CLICK_DEBOUNCE_MS) return;
   lastClickTime.right = now;
-
-  console.log(`Center → ${isForward ? "FORWARD" : "BACKWARD"}`);
+  console.log(`Center → ${isForward ? 'FORWARD' : 'BACKWARD'}`);
   moveGimbal(targetPan());
+}
+
+// --- RAW EVDEV READER ---
+
+function parseEvents(buf) {
+  for (let offset = 0; offset + INPUT_EVENT_SIZE <= buf.length; offset += INPUT_EVENT_SIZE) {
+    const type = buf.readUInt16LE(offset + 16);
+    const code = buf.readUInt16LE(offset + 18);
+    const value = buf.readInt32LE(offset + 20);
+
+    if (type === EV_KEY && value === KEY_DOWN) {
+      if (code === BTN_LEFT) onLeftClick();
+      else if (code === BTN_RIGHT) onRightClick();
+    }
+  }
 }
 
 // --- MOUSE DETECTION & HOT-PLUG ---
 
-function findMouseDevices() {
-  const env = process.env.MOUSE_DEV;
-  if (env) {
-    console.log(`Using MOUSE_DEV override: ${env}`);
-    return [env];
+function findMouseDevice() {
+  if (process.env.MOUSE_DEV) {
+    console.log(`Using MOUSE_DEV override: ${process.env.MOUSE_DEV}`);
+    return process.env.MOUSE_DEV;
   }
 
   for (const dir of MOUSE_SCAN_DIRS) {
     if (!fs.existsSync(dir)) continue;
     try {
-      const entries = fs.readdirSync(dir);
-      const mice = entries
-        .filter((e) => e.endsWith("-event-mouse"))
-        .map((e) => path.join(dir, e));
+      const mice = fs.readdirSync(dir)
+        .filter(e => e.endsWith('-event-mouse'))
+        .map(e => path.join(dir, e));
       if (mice.length > 0) {
-        if (mice.length > 1) {
-          console.log(`Multiple mice found: ${mice.join(", ")} — using first.`);
-        }
-        return mice;
+        if (mice.length > 1) console.log(`Multiple mice found: ${mice.join(', ')} — using first.`);
+        return mice[0];
       }
     } catch (_) {}
   }
 
-  return [];
+  return null;
 }
 
 function disconnectMouse() {
-  if (mouseInput) {
-    try {
-      mouseInput.destroy();
-    } catch (_) {}
-    mouseInput = null;
-    mouseMouse = null;
+  if (mouseStream) {
+    mouseStream.destroy();
+    mouseStream = null;
   }
 }
 
 function connectMouse() {
   disconnectMouse();
 
-  const devices = findMouseDevices();
-  if (devices.length === 0) {
-    console.log("No mouse found. Waiting for one to be plugged in...");
+  const devPath = findMouseDevice();
+  if (!devPath) {
+    console.log('No mouse found. Waiting for one to be plugged in...');
     return;
   }
 
-  const devPath = devices[0];
   console.log(`Mouse connected: ${devPath}`);
 
+  let buf = Buffer.alloc(0);
+
   try {
-    mouseInput = new InputEvent(devPath);
-    mouseMouse = new InputEvent.Mouse(mouseInput);
+    mouseStream = fs.createReadStream(devPath);
 
-    mouseMouse.on("leftclick", onLeftClick);
-    mouseMouse.on("rightclick", onRightClick);
-
-    mouseInput.on("error", (err) => {
-      console.error("Mouse error:", err.message);
-      mouseInput = null;
-      mouseMouse = null;
+    mouseStream.on('data', (chunk) => {
+      buf = Buffer.concat([buf, chunk]);
+      const complete = Math.floor(buf.length / INPUT_EVENT_SIZE) * INPUT_EVENT_SIZE;
+      if (complete > 0) {
+        parseEvents(buf.subarray(0, complete));
+        buf = buf.subarray(complete);
+      }
     });
 
-    mouseInput.on("close", () => {
-      console.log("Mouse disconnected.");
-      mouseInput = null;
-      mouseMouse = null;
+    mouseStream.on('error', (err) => {
+      if (err.code === 'EACCES') {
+        console.error("Permission denied opening mouse. Add yourself to the 'input' group:\n  sudo usermod -a -G input $USER\nthen log out and back in.");
+      } else {
+        console.error('Mouse error:', err.message);
+      }
+      mouseStream = null;
+    });
+
+    mouseStream.on('close', () => {
+      console.log('Mouse disconnected.');
+      mouseStream = null;
     });
   } catch (err) {
-    mouseInput = null;
-    mouseMouse = null;
-    if (err.code === 'EACCES') {
-      console.error(`Permission denied opening mouse device. Add yourself to the 'input' group and re-login:\n  sudo usermod -a -G input $USER`);
-    } else {
-      console.error("Failed to open mouse device:", err.message);
-    }
+    console.error('Failed to open mouse device:', err.message);
+    mouseStream = null;
   }
 }
 
@@ -207,14 +218,12 @@ function watchForMouse() {
     if (!fs.existsSync(dir)) continue;
     try {
       const watcher = fs.watch(dir, (eventType) => {
-        if (eventType === "rename" && !mouseInput) {
-          // Debounce: plugging in a device fires several rename events in quick
-          // succession. Wait until they settle before attempting to connect.
+        if (eventType === 'rename' && !mouseStream) {
           clearTimeout(reconnectTimer);
           reconnectTimer = setTimeout(connectMouse, 500);
         }
       });
-      watcher.on("error", () => {});
+      watcher.on('error', () => {});
       dirWatchers.push(watcher);
     } catch (_) {}
   }
@@ -222,36 +231,34 @@ function watchForMouse() {
 
 // --- SIGNAL HANDLING & DURABILITY ---
 
-process.on("uncaughtException", (err) => {
-  console.error("Uncaught exception:", err.message);
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err.message);
   process.exit(1);
 });
 
-process.on("unhandledRejection", (reason) => {
-  console.error("Unhandled rejection:", reason);
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled rejection:', reason);
   process.exit(1);
 });
 
 function cleanup() {
   disconnectMouse();
   for (const w of dirWatchers) {
-    try {
-      w.close();
-    } catch (_) {}
+    try { w.close(); } catch (_) {}
   }
   process.exit(0);
 }
 
-process.on("SIGTERM", cleanup);
-process.on("SIGINT", cleanup);
+process.on('SIGTERM', cleanup);
+process.on('SIGINT', cleanup);
 
 // --- MAIN ---
 
 cameraDevice = detectCamera();
 
-console.log("--- Camera Controls ---");
-console.log("Left click  : toggle FORWARD / BACKWARD");
-console.log("Right click : re-center current mode");
+console.log('--- Camera Controls ---');
+console.log('Left click  : toggle FORWARD / BACKWARD');
+console.log('Right click : re-center current mode');
 
 connectMouse();
 watchForMouse();
