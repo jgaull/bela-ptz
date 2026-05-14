@@ -30,7 +30,7 @@ let cameraDevice = null;
 let mouseStream = null;
 let lastClickTime = { left: 0, right: 0 };
 let dirWatchers = [];
-let activeGimbalChild = null;
+let gimbalBusy = false;
 
 // --- CAMERA DETECTION ---
 
@@ -101,62 +101,45 @@ function spawnV4l2(args) {
 }
 
 async function moveGimbal(pan) {
-  if (activeGimbalChild) {
+  if (gimbalBusy) {
     console.log('Gimbal busy, ignoring click.');
     return;
   }
 
-  // Use a sentinel so concurrent clicks are blocked during the whole sequence.
-  activeGimbalChild = {};
+  gimbalBusy = true;
+  console.log(`Gimbal: pan → ${pan}`);
 
-  console.log(`[GIMBAL] pan → ${pan}`);
   try {
     await spawnV4l2([`--set-ctrl=pan_absolute=${pan}`]);
-    console.log(`[GIMBAL] pan done`);
+    console.log('Gimbal: done');
   } catch (err) {
-    console.error(`[GIMBAL] failed: ${err.message}`);
+    console.error(`Gimbal: failed: ${err.message}`);
   }
 
-  console.log(`[GIMBAL] cooling down ${GIMBAL_COOLDOWN_MS}ms`);
   setTimeout(() => {
-    activeGimbalChild = null;
-    console.log('[GIMBAL] cooldown done, ready');
+    gimbalBusy = false;
+    console.log('Gimbal: ready');
   }, GIMBAL_COOLDOWN_MS);
 }
 
 // --- CLICK HANDLERS ---
 
-function logCurrentPan(prefix) {
-  const child = spawn('v4l2-ctl', ['-d', cameraDevice, '-C', 'pan_absolute,tilt_absolute'], { stdio: 'pipe' });
-  let out = '', err = '';
-  child.stdout.on('data', d => out += d);
-  child.stderr.on('data', d => err += d);
-  child.on('close', (code) => {
-    if (code === 0) console.log(`${prefix} hw=${out.trim()}`);
-    else console.log(`${prefix} hw=read_failed(${err.trim() || 'exit ' + code})`);
-  });
-}
-
 function onLeftClick() {
   const now = Date.now();
-  console.log(`[LEFT]  isForward=${isForward} busy=${!!activeGimbalChild} debounce=${now - lastClickTime.left < CLICK_DEBOUNCE_MS}`);
-  logCurrentPan('[LEFT] ');
   if (now - lastClickTime.left < CLICK_DEBOUNCE_MS) return;
-  if (activeGimbalChild) return;
+  if (gimbalBusy) { console.log('Gimbal busy, ignoring left click.'); return; }
   lastClickTime.left = now;
   isForward = !isForward;
-  console.log(`[LEFT]  flipped → isForward=${isForward} target_pan=${targetPan()}`);
+  console.log(`Left click: ${isForward ? 'FORWARD' : 'BACKWARD'}`);
   moveGimbal(targetPan());
 }
 
 function onRightClick() {
   const now = Date.now();
-  console.log(`[RIGHT] isForward=${isForward} busy=${!!activeGimbalChild} debounce=${now - lastClickTime.right < CLICK_DEBOUNCE_MS}`);
-  logCurrentPan('[RIGHT]');
   if (now - lastClickTime.right < CLICK_DEBOUNCE_MS) return;
-  if (activeGimbalChild) return;
+  if (gimbalBusy) { console.log('Gimbal busy, ignoring right click.'); return; }
   lastClickTime.right = now;
-  console.log(`[RIGHT] centering → isForward=${isForward} target_pan=${targetPan()}`);
+  console.log(`Right click: center ${isForward ? 'FORWARD' : 'BACKWARD'}`);
   moveGimbal(targetPan());
 }
 
@@ -281,10 +264,6 @@ process.on('unhandledRejection', (reason) => {
 });
 
 function cleanup() {
-  if (activeGimbalChild) {
-    activeGimbalChild.kill();
-    activeGimbalChild = null;
-  }
   disconnectMouse();
   for (const w of dirWatchers) {
     try { w.close(); } catch (_) {}
