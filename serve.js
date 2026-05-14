@@ -104,6 +104,7 @@ function moveGimbal(pan) {
   ], { stdio: 'pipe' });
 
   activeGimbalChild = child;
+  console.log(`[GIMBAL] spawned pid=${child.pid} pan=${pan}`);
 
   const timer = setTimeout(() => {
     if (activeGimbalChild === child) {
@@ -113,11 +114,11 @@ function moveGimbal(pan) {
     }
   }, V4L2_TIMEOUT_MS);
 
-  child.on('close', (code) => {
+  child.on('close', (code, signal) => {
     clearTimeout(timer);
     if (activeGimbalChild === child) activeGimbalChild = null;
-    if (code === 0) console.log(`Gimbal: ${label} (pan=${pan})`);
-    else console.error(`Gimbal move failed (exit ${code}).`);
+    console.log(`[GIMBAL] pid=${child.pid} closed code=${code} signal=${signal} busy=${!!activeGimbalChild}`);
+    if (code !== 0 && signal == null) console.error(`Gimbal move failed (exit ${code}).`);
   });
 
   child.on('error', (err) => {
@@ -131,6 +132,7 @@ function moveGimbal(pan) {
 
 function onLeftClick() {
   const now = Date.now();
+  console.log(`[LEFT]  isForward=${isForward} busy=${!!activeGimbalChild} debounce=${now - lastClickTime.left < CLICK_DEBOUNCE_MS}`);
   if (now - lastClickTime.left < CLICK_DEBOUNCE_MS) return;
   if (activeGimbalChild) return;
   lastClickTime.left = now;
