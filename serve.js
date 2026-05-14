@@ -97,7 +97,6 @@ function moveGimbal(pan) {
     return;
   }
 
-  const label = isForward ? 'FORWARD' : 'BACKWARD';
   const child = spawn('v4l2-ctl', [
     '-d', cameraDevice,
     `--set-ctrl=pan_absolute=${pan},tilt_absolute=${TILT_CENTER}`,
