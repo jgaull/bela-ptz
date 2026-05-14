@@ -1,0 +1,14 @@
+{
+  "name": "camera-controls",
+  "version": "1.0.0",
+  "private": false,
+  "description": "DJI Pocket 3 PTZ control via USB mouse clicks",
+  "main": "serve.js",
+  "scripts": {
+    "start": "node serve.js",
+    "install-service": "sudo node install.js"
+  },
+  "dependencies": {
+    "input-event": "^1.0.5"
+  }
+}
