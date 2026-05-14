@@ -93,8 +93,8 @@ function targetPan() {
 
 function moveGimbal(pan) {
   if (activeGimbalChild) {
-    activeGimbalChild.kill();
-    activeGimbalChild = null;
+    console.log('Gimbal busy, ignoring click.');
+    return;
   }
 
   const label = isForward ? 'FORWARD' : 'BACKWARD';
@@ -267,6 +267,10 @@ process.on('unhandledRejection', (reason) => {
 });
 
 function cleanup() {
+  if (activeGimbalChild) {
+    activeGimbalChild.kill();
+    activeGimbalChild = null;
+  }
   disconnectMouse();
   for (const w of dirWatchers) {
     try { w.close(); } catch (_) {}
