@@ -298,7 +298,7 @@ function cleanup(signal) {
   for (const child of activeChildren) {
     try { child.kill("SIGKILL"); } catch (_) {}
   }
-  process.exit(0);
+  process.kill(process.pid, "SIGKILL");
 }
 
 process.on("SIGTERM", () => cleanup("SIGTERM"));
