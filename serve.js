@@ -28,6 +28,7 @@ let cameraDevice = null;
 let mouseStream = null;
 let lastClickTime = { left: 0, right: 0 };
 let dirWatchers = [];
+const activeChildren = new Set();
 let gimbalBusy = false;
 
 // --- CAMERA DETECTION ---
@@ -95,17 +96,20 @@ function spawnV4l2(args, captureStdout = false) {
     const child = spawn("v4l2-ctl", ["-d", cameraDevice, ...args], {
       stdio: ["ignore", captureStdout ? "pipe" : "ignore", "ignore"],
     });
+    activeChildren.add(child);
     let out = "";
     if (captureStdout) child.stdout.on("data", (d) => (out += d));
     const timer = setTimeout(() => {
-      child.kill();
+      child.kill("SIGKILL");
       reject(new Error("timed out"));
     }, V4L2_TIMEOUT_MS);
     child.on("close", (code) => {
+      activeChildren.delete(child);
       clearTimeout(timer);
       code === 0 ? resolve(out) : reject(new Error(`exit ${code}`));
     });
     child.on("error", (err) => {
+      activeChildren.delete(child);
       clearTimeout(timer);
       reject(err);
     });
@@ -290,6 +294,9 @@ process.on("unhandledRejection", (reason) => {
 });
 
 function cleanup() {
+  for (const child of activeChildren) {
+    try { child.kill("SIGKILL"); } catch (_) {}
+  }
   disconnectMouse();
   for (const w of dirWatchers) {
     try {
