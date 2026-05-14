@@ -59,7 +59,8 @@ WantedBy=multi-user.target
     process.exit(1);
   }
 
-  fs.renameSync(tmpFile, SERVICE_FILE);
+  fs.copyFileSync(tmpFile, SERVICE_FILE);
+  fs.unlinkSync(tmpFile);
   fs.chmodSync(SERVICE_FILE, 0o644);
 
   execSync('systemctl daemon-reload', { stdio: 'inherit' });
