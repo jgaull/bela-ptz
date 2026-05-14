@@ -65,6 +65,21 @@ WantedBy=multi-user.target
   execSync('systemctl daemon-reload', { stdio: 'inherit' });
   execSync(`systemctl enable --now ${SERVICE_NAME}`, { stdio: 'inherit' });
 
+  // Add the invoking user to the video and input groups so manual runs
+  // (npm start) work without sudo after a re-login.
+  const invoker = process.env.SUDO_USER;
+  if (invoker) {
+    for (const group of ['video', 'input']) {
+      try {
+        execSync(`usermod -a -G ${group} ${invoker}`, { stdio: 'pipe' });
+        console.log(`Added ${invoker} to group: ${group}`);
+      } catch (err) {
+        console.warn(`Warning: could not add ${invoker} to ${group} group:`, err.message);
+      }
+    }
+    console.log(`\nNote: log out and back in (or run 'newgrp video') for group changes to take effect.`);
+  }
+
   console.log(`\nService installed at ${SERVICE_FILE}`);
   console.log(`Status:  systemctl status ${SERVICE_NAME}`);
   console.log(`Logs:    journalctl -u ${SERVICE_NAME} -f`);
