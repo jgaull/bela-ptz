@@ -7,7 +7,6 @@ const path = require('path');
 // --- CONFIGURATION ---
 const PAN_FORWARD = 648000;
 const PAN_BACKWARD = 0;
-const TILT_CENTER = 0;
 const V4L2_TIMEOUT_MS = 3000;
 const GIMBAL_COOLDOWN_MS = 5000;
 const CLICK_DEBOUNCE_MS = 150;
@@ -110,10 +109,8 @@ async function moveGimbal(pan) {
   // Use a sentinel so concurrent clicks are blocked during the whole sequence.
   activeGimbalChild = {};
 
-  console.log(`[GIMBAL] tilt → 0 then pan → ${pan}`);
+  console.log(`[GIMBAL] pan → ${pan}`);
   try {
-    await spawnV4l2([`--set-ctrl=tilt_absolute=${TILT_CENTER}`]);
-    console.log(`[GIMBAL] tilt done`);
     await spawnV4l2([`--set-ctrl=pan_absolute=${pan}`]);
     console.log(`[GIMBAL] pan done`);
   } catch (err) {
