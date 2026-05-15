@@ -8,7 +8,5 @@
     "start": "node serve.js",
     "install-service": "sudo node install.js"
   },
-  "dependencies": {
-    "usb": "^2.17.0"
-  }
+  "dependencies": {}
 }
