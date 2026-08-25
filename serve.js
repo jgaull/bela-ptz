@@ -2,6 +2,7 @@
 
 const { execSync, spawn } = require("child_process");
 const fs = require("fs");
+const net = require("net");
 const path = require("path");
 
 // --- CONFIGURATION ---
@@ -11,6 +12,14 @@ const TILT_CENTER = 0;
 const V4L2_TIMEOUT_MS = 3000;
 const CLICK_DEBOUNCE_MS = 150;
 const MOUSE_SCAN_DIRS = ["/dev/input/by-id", "/dev/input/by-path"];
+
+// gstlibuvch264src's control socket. Only exists while belacoder is running
+// a uvc pipeline (it owns the camera's USB control interface for the life
+// of the stream) - so this is preferred while streaming, with the v4l2
+// path below kept as a fallback for when the camera is idle and the
+// kernel's uvcvideo driver owns it instead.
+const PTZ_SOCKET_PATH = "/tmp/belabox_ptz.sock";
+const PTZ_SOCKET_TIMEOUT_MS = 1000;
 
 // Linux input_event struct (24 bytes on 64-bit):
 //   tv_sec  (8 bytes, u64)
@@ -32,7 +41,12 @@ let dirWatchers = [];
 const activeChildren = new Set();
 let gimbalBusy = false;
 
-// --- CAMERA DETECTION ---
+// --- CAMERA DETECTION (v4l2 fallback path, used when idle / not streaming) ---
+//
+// Non-fatal: while a uvc pipeline is streaming, the kernel doesn't own the
+// camera and none of this will resolve - that's expected, and control still
+// works via the PTZ_SOCKET_PATH socket in that case. This only matters for
+// controlling the camera while it's idle.
 
 function detectCamera() {
   let listOutput;
@@ -42,8 +56,8 @@ function detectCamera() {
       stdio: "pipe",
     }).toString();
   } catch (err) {
-    console.error("Failed to list v4l2 devices:", err.message);
-    process.exit(1);
+    console.log(`v4l2 device list unavailable (${err.message}); PTZ over v4l2 disabled until the camera is idle and kernel-bound.`);
+    return null;
   }
 
   const blocks = listOutput.split(/\n\s*\n/).filter(Boolean);
@@ -61,8 +75,8 @@ function detectCamera() {
   }
 
   if (!devicePath) {
-    console.error("DJI Pocket 3 not found. Is it connected via USB?");
-    process.exit(1);
+    console.log("DJI Pocket 3 not v4l2-visible (expected while streaming a uvc pipeline).");
+    return null;
   }
 
   let ctrlOutput;
@@ -72,21 +86,19 @@ function detectCamera() {
       stdio: "pipe",
     }).toString();
   } catch (err) {
-    console.error(`Failed to read controls for ${devicePath}:`, err.message);
-    process.exit(1);
+    console.log(`Failed to read controls for ${devicePath}: ${err.message}`);
+    return null;
   }
 
   if (
     !ctrlOutput.includes("pan_absolute") ||
     !ctrlOutput.includes("tilt_absolute")
   ) {
-    console.error(
-      `${devicePath} does not expose pan_absolute / tilt_absolute controls.`,
-    );
-    process.exit(1);
+    console.log(`${devicePath} does not expose pan_absolute / tilt_absolute controls.`);
+    return null;
   }
 
-  console.log(`Camera detected: ${devicePath}`);
+  console.log(`Camera detected via v4l2: ${devicePath}`);
   return devicePath;
 }
 
@@ -117,11 +129,83 @@ function spawnV4l2(args, captureStdout = false) {
   });
 }
 
-async function readPan() {
-  const out = await spawnV4l2(["-C", "pan_absolute"], true);
-  const match = out.match(/pan_absolute:\s*(-?\d+)/);
-  if (!match) throw new Error("could not parse pan_absolute");
-  return parseInt(match[1], 10);
+async function readPanTiltViaV4l2() {
+  const panOut = await spawnV4l2(["-C", "pan_absolute"], true);
+  const panMatch = panOut.match(/pan_absolute:\s*(-?\d+)/);
+  if (!panMatch) throw new Error("could not parse pan_absolute");
+
+  const tiltOut = await spawnV4l2(["-C", "tilt_absolute"], true);
+  const tiltMatch = tiltOut.match(/tilt_absolute:\s*(-?\d+)/);
+  if (!tiltMatch) throw new Error("could not parse tilt_absolute");
+
+  return { pan: parseInt(panMatch[1], 10), tilt: parseInt(tiltMatch[1], 10) };
+}
+
+async function setPanTiltViaV4l2(pan, tilt) {
+  await spawnV4l2([`--set-ctrl=pan_absolute=${pan},tilt_absolute=${tilt}`]);
+}
+
+// --- PTZ CONTROL SOCKET (preferred; only live while belacoder is streaming) ---
+
+function socketRequest(command) {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection(PTZ_SOCKET_PATH);
+    let data = "";
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error("PTZ socket request timed out"));
+    }, PTZ_SOCKET_TIMEOUT_MS);
+
+    socket.on("connect", () => socket.write(command + "\n"));
+    socket.on("data", (chunk) => (data += chunk));
+    socket.on("end", () => {
+      clearTimeout(timer);
+      const line = data.trim();
+      if (line.startsWith("OK")) resolve(line.slice(2).trim());
+      else reject(new Error(line || "empty PTZ socket response"));
+    });
+    socket.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
+async function readPanTiltViaSocket() {
+  const reply = await socketRequest("GET");
+  const match = reply.match(/(-?\d+)\s+(-?\d+)/);
+  if (!match) throw new Error(`could not parse PTZ socket GET response: ${reply}`);
+  return { pan: parseInt(match[1], 10), tilt: parseInt(match[2], 10) };
+}
+
+async function setPanTiltViaSocket(pan, tilt) {
+  await socketRequest(`SET ${pan} ${tilt}`);
+}
+
+// --- UNIFIED PAN/TILT ACCESS: socket first (streaming), v4l2 fallback (idle) ---
+
+async function readPanTilt() {
+  try {
+    return await readPanTiltViaSocket();
+  } catch (socketErr) {
+    if (!cameraDevice) cameraDevice = detectCamera();
+    if (!cameraDevice) {
+      throw new Error(`camera unavailable (PTZ socket: ${socketErr.message})`);
+    }
+    return readPanTiltViaV4l2();
+  }
+}
+
+async function setPanTilt(pan, tilt) {
+  try {
+    await setPanTiltViaSocket(pan, tilt);
+  } catch (socketErr) {
+    if (!cameraDevice) cameraDevice = detectCamera();
+    if (!cameraDevice) {
+      throw new Error(`camera unavailable (PTZ socket: ${socketErr.message})`);
+    }
+    await setPanTiltViaV4l2(pan, tilt);
+  }
 }
 
 function closestPreset(pan) {
@@ -139,10 +223,10 @@ async function onMiddleClick() {
   lastClickTime.middle = now;
   gimbalBusy = true;
   try {
-    const pan = await readPan();
+    const { pan, tilt } = await readPanTilt();
     const current = closestPreset(pan);
     const target = current === PAN_FORWARD ? PAN_BACKWARD : PAN_FORWARD;
-    await spawnV4l2([`--set-ctrl=pan_absolute=${target}`]);
+    await setPanTilt(target, tilt);
   } catch (err) {
     console.error(`Left click failed: ${err.message}`);
   }
@@ -156,9 +240,9 @@ async function onRightClick() {
   lastClickTime.right = now;
   gimbalBusy = true;
   try {
-    const pan = await readPan();
+    const { pan } = await readPanTilt();
     const target = closestPreset(pan);
-    await spawnV4l2([`--set-ctrl=pan_absolute=${target},tilt_absolute=${TILT_CENTER}`]);
+    await setPanTilt(target, TILT_CENTER);
   } catch (err) {
     console.error(`Right click failed: ${err.message}`);
   }
