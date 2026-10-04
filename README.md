@@ -1,5 +1,5 @@
 # bela-ptz
-
+This is a very basic proof of concept. It will not work with any UVC based pipeline.
 https://github.com/user-attachments/assets/50b1da64-a49d-40b6-a282-bc67b819a204
 
 DJI Osmo Pocket 3 PTZ control via USB mouse. Runs as a systemd service on the belabox.
@@ -14,7 +14,7 @@ DJI Osmo Pocket 3 PTZ control via USB mouse. Runs as a systemd service on the be
 Override mouse device: `MOUSE_DEV=/dev/input/eventX node serve.js`
 
 ## Install
-
+SSH into your Belabox and run the following:
 ```bash
 npm install
 sudo node install.js
