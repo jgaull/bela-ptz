@@ -1,5 +1,7 @@
 # bela-ptz
 
+https://github.com/user-attachments/assets/50b1da64-a49d-40b6-a282-bc67b819a204
+
 DJI Osmo Pocket 3 PTZ control via USB mouse. Runs as a systemd service on the belabox.
 
 ## Controls
@@ -23,3 +25,4 @@ sudo node install.js
 ```bash
 journalctl -u bela-ptz -f
 ```
+
